@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 QuantumultX 配置生成脚本（青龙面板环境变量版）
-修复header问题，确保MITM证书格式正确
+修复header问题，确保MITM证书格式正确，个人策略组添加到static部分开始位置
 """
 
 import os
@@ -366,7 +366,7 @@ class QuantumultXConfigGenerator:
             return '\n'.join(result_lines)
 
     def add_personal_policies_smart(self, policy_content: str) -> str:
-        """智能添加个人策略组，确保static策略添加到static部分"""
+        """智能添加个人策略组，确保static策略添加到static部分开始位置"""
         personal_policies = self.personal_config.get("policies", [])
 
         if not personal_policies:
@@ -378,35 +378,52 @@ class QuantumultXConfigGenerator:
         # 分割policy部分内容
         lines = policy_content.split('\n')
 
-        # 找到注释行（以#开头的行）和url-latency-benchmark行的位置
-        comment_lines = []
-        static_lines = []
-        benchmark_lines = []
-        other_lines = []
+        # 查找各个部分的位置
+        static_section_start = -1
+        static_section_end = -1
+        comment_section_start = -1
+        benchmark_section_start = -1
+        current_section = None
 
-        for line in lines:
+        for i, line in enumerate(lines):
             line_stripped = line.strip()
-            if line_stripped.startswith('#'):
-                comment_lines.append(line)
-            elif line_stripped.startswith('static='):
-                static_lines.append(line)
+
+            if line_stripped.startswith('static='):
+                if current_section != 'static':
+                    current_section = 'static'
+                    if static_section_start == -1:
+                        static_section_start = i
+                static_section_end = i
+            elif line_stripped.startswith('#'):
+                if current_section != 'comment':
+                    current_section = 'comment'
+                    if comment_section_start == -1:
+                        comment_section_start = i
             elif line_stripped.startswith('url-latency-benchmark='):
-                benchmark_lines.append(line)
-            elif line_stripped:
-                other_lines.append(line)
+                if current_section != 'benchmark':
+                    current_section = 'benchmark'
+                    if benchmark_section_start == -1:
+                        benchmark_section_start = i
+            elif line_stripped and not line_stripped.startswith(('static=', '#', 'url-latency-benchmark=')):
+                if current_section != 'other':
+                    current_section = 'other'
 
-        self.logger.info(f"解析到: {len(static_lines)}个static策略, {len(benchmark_lines)}个benchmark策略, {len(comment_lines)}个注释")
+        self.logger.info(f"定位到：static部分 {static_section_start}到{static_section_end}行，注释从 {comment_section_start}行开始")
 
-        # 去重：收集已有的策略组名称
+        # 收集已有策略组名称用于去重
         existing_policy_names = set()
-        for line in static_lines + benchmark_lines:
-            # 提取策略组名称
-            match = re.match(r'^(static|url-latency-benchmark)=([^,]+),', line.strip())
-            if match:
-                existing_policy_names.add(match.group(2).strip())
+        for i in range(len(lines)):
+            if static_section_start <= i <= static_section_end:
+                line = lines[i].strip()
+                if line.startswith('static='):
+                    match = re.match(r'^static=([^,]+),', line)
+                    if match:
+                        existing_policy_names.add(match.group(1).strip())
 
-        # 添加个人策略组到static_lines（去重）
+        # 添加个人策略组到static部分开始位置
+        new_static_policies = []
         added_count = 0
+
         for policy in personal_policies:
             if isinstance(policy, str):
                 policy_str = policy.strip()
@@ -419,38 +436,42 @@ class QuantumultXConfigGenerator:
                         self.logger.info(f"策略组已存在，跳过: {policy_name}")
                         continue
 
-                    # 添加到static_lines
-                    static_lines.append(policy_str)
+                    # 添加到新策略组列表
+                    new_static_policies.append(policy_str)
                     existing_policy_names.add(policy_name)
                     added_count += 1
-                    self.logger.info(f"添加策略组: {policy_name}")
+                    self.logger.info(f"添加策略组到static开始位置: {policy_name}")
                 else:
-                    self.logger.warning(f"策略组格式不正确: {policy_str}")
+                    self.logger.warning(f"策略组格式不正确（非static类型）: {policy_str[:50]}...")
 
         if added_count == 0:
             self.logger.info("没有新的策略组需要添加")
             return policy_content
 
-        # 重新组合policy部分
-        # 按照原格式：static策略 -> 注释 -> url-latency-benchmark策略 -> 其他
+        # 重新构建policy内容
         new_lines = []
 
-        # 添加static策略
-        new_lines.extend(static_lines)
-        new_lines.append("")  # 空行分隔
+        # 添加static部分开始之前的内容
+        if static_section_start > 0:
+            new_lines.extend(lines[:static_section_start])
 
-        # 添加注释
-        new_lines.extend(comment_lines)
+        # 添加新的个人策略组（在static部分的最开始）
+        for policy in new_static_policies:
+            new_lines.append(policy)
 
-        # 添加url-latency-benchmark策略
-        new_lines.extend(benchmark_lines)
+        # 添加原有的static策略
+        if static_section_start != -1 and static_section_end != -1:
+            for i in range(static_section_start, static_section_end + 1):
+                new_lines.append(lines[i])
 
-        # 添加其他行
-        for line in other_lines:
-            if line.strip():  # 跳过空行
-                new_lines.append(line)
+        # 添加static部分之后的内容
+        if static_section_end + 1 < len(lines):
+            # 确保在新策略组后有一个空行
+            if new_lines and new_lines[-1].strip():
+                new_lines.append("")
+            new_lines.extend(lines[static_section_end + 1:])
 
-        self.logger.info(f"成功添加了 {added_count} 个策略组")
+        self.logger.info(f"成功添加了 {added_count} 个策略组到static部分开始位置")
 
         return '\n'.join(new_lines)
 
@@ -820,7 +841,7 @@ def print_usage():
     print("")
     print("注意：")
     print("1. MITM证书必须是纯字符串格式，不要用JSON数组格式")
-    print("2. 脚本会自动将个人策略组添加到正确位置（static部分）")
+    print("2. 脚本会自动将个人策略组添加到正确位置（static部分的开始位置）")
     print("3. 不会包含原配置的header内容")
     print("=" * 60)
 
