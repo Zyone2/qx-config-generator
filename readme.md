@@ -1,257 +1,307 @@
-# QuantumultX 配置生成器(AI)
+# QuantumultX 配置生成器
 
-基于 ddgksf2013 配置的个性化 QuantumultX 配置文件生成工具，专为青龙面板环境设计。
+这是一个用于生成 QuantumultX 个性化配置的脚本，专为青龙面板环境设计。脚本会自动从指定远程地址获取配置，与本地保存的配置副本比较，当检测到更新时，会合并个人配置并生成最终配置文件。
 
-## 🌟 功能特性
+## 功能特点
 
-- **自动化生成**：自动从 ddgksf2013 获取最新配置模板
-- **个性化定制**：通过环境变量添加个人配置项
-- **MITM 证书管理**：自动注入个人 MITM 证书配置
-- **策略组智能添加**：将个人策略组添加到 static 部分开头
-- **配置缓存**：支持 24 小时缓存，减少网络请求
-- **自动备份**：每次生成自动备份新旧配置
-- **去重机制**：避免重复添加相同配置项
-- **全局替换**：支持配置内容的全局替换规则
-- **日志记录**：详细的运行日志，便于问题排查
+- ✅ **智能更新检查**：比较远程配置与本地副本的MD5哈希，仅在配置有变化时才生成新配置
+- ✅ **个人化配置**：通过环境变量添加个人MITM证书、策略组、重写规则等
+- ✅ **青龙面板集成**：使用青龙内置通知系统，支持成功/失败通知
+- ✅ **精简存储**：只保留最新生成的配置和远程配置副本，不保存历史备份
+- ✅ **MITM证书修复**：自动修复MITM证书格式，确保配置文件正确
+- ✅ **策略组智能添加**：将个人策略组添加到static部分的开始位置
 
-## 📁 文件结构
+## 文件结构
 
 ```
-quantumultx-generator/
-├── main.py              # 主脚本文件
-├── subscribe.json       # 青龙面板订阅配置
-├── requirements.txt     # Python 依赖包
-└── README.md           # 说明文档
+/ql/data/config/
+├── QuantumultX.conf          # 最终生成的配置文件
+├── qx_remote_backup.conf     # 远程配置副本（用于比较）
+└── qx_remote_backup.conf.hash # 配置哈希文件
+
+/ql/data/log/
+└── quantumultx_generator.log # 脚本运行日志
 ```
 
-## ⚙️ 青龙面板配置
+## 快速开始
 
-### 1. 添加订阅
+### 1. 安装依赖
 
-在青龙面板中添加以下订阅：
+确保青龙面板已安装 Python3，并安装必要的依赖：
 
-```
-https://raw.githubusercontent.com/[你的用户名]/[仓库名]/main/subscribe.json
-```
-
-### 2. 环境变量设置
-
-在青龙面板的 `环境变量` 中添加以下变量（所有变量以 `QX_` 开头）：
-
-#### MITM 证书配置（必需）
 ```bash
-# MITM 证书密码（纯字符串格式）
-QX_MITM_PASSPHRASE=你的证书密码
+pip3 install requests
+```
 
-# MITM 证书内容（纯字符串格式，base64编码）
+### 2. 部署脚本
+
+1. 在青龙面板中创建新脚本
+2. 将脚本内容复制到脚本编辑器中
+3. 保存脚本（例如命名为 `quantumultx_generator.py`）
+
+### 3. 配置环境变量
+
+在青龙面板的环境变量页面，添加以下环境变量：
+
+#### 必需配置
+
+```bash
+# MITM证书配置（必须是纯字符串格式）
+QX_MITM_PASSPHRASE=A24AB7DF
 QX_MITM_P12=MIILuwIBAzCCC4UGCSqGSIb3DQEHAaCCC3YE...
 ```
 
-#### 策略组配置（可选）
-```bash
-# 个人策略组（JSON数组格式）
-QX_POLICIES=[
-  "static=AiInOne,香港节点,美国节点,狮城节点,img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/Global.png",
-  "static=Steam,自动选择,台湾节点,direct,香港节点,日本节点,美国节点,狮城节点,proxy,img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Steam.png"
-]
-```
+#### 可选配置
 
-#### 重写规则（可选）
 ```bash
-# 远程重写规则（JSON数组格式）
-QX_REWRITE_REMOTE=[
-  "https://github.com/ddgksf2013/Rewrite/raw/master/Function/EmbyPlugin.conf, tag=emby, update-interval=172800, opt-parser=false, enabled=true",
-  "https://github.com/ddgksf2013/Rewrite/raw/master/AdBlock/StartUp.conf, tag=去广告, update-interval=86400, opt-parser=true, enabled=true"
-]
-```
-
-#### 服务器订阅（可选）
-```bash
-# 服务器订阅链接（JSON数组格式）
-QX_SERVER_REMOTE=[
-  "https://你的订阅链接, tag=我的订阅, update-interval=86400, enabled=true"
-]
-```
-
-#### DNS 配置（可选）
-```bash
-# DNS 服务器配置
-QX_DNS=[
-  "server=114.114.114.114",
-  "server=223.5.5.5",
-  "server=119.29.29.29",
-  "server=1.1.1.1"
-]
-```
-
-#### 其他配置
-```bash
-# 远程配置地址（可自定义）
+# 远程配置地址（默认为 ddgksf2013 的配置）
 QX_REMOTE_URL=https://ddgksf2013.top/Profile/QuantumultX.conf
 
 # 本地配置文件路径
 QX_CONFIG_PATH=/ql/data/config/QuantumultX.conf
 
-# 备份目录
-QX_BACKUP_DIR=/ql/data/config/backup
-
 # 日志文件路径
 QX_LOG_FILE=/ql/data/log/quantumultx_generator.log
 
-# 缓存文件路径
-QX_CACHE_FILE=/ql/data/config/qx_config_cache.json
+# 远程配置备份路径
+QX_REMOTE_BACKUP=/ql/data/config/qx_remote_backup.conf
 ```
 
-## 🔧 安装与使用
-
-### 方法一：青龙面板订阅（推荐）
-
-1. 在青龙面板中添加订阅链接
-2. 配置环境变量
-3. 脚本会自动定时运行
-
-### 方法二：手动运行
+#### 个人化配置（可选）
 
 ```bash
-# 克隆仓库
-git clone https://github.com/你的用户名/ddgk2quanx.git
-cd ddgk2quanx
+# 重写规则（JSON数组格式）
+QX_REWRITE_REMOTE=["https://github.com/ddgksf2013/Rewrite/raw/master/Function/EmbyPlugin.conf, tag=emby, update-interval=172800, opt-parser=false, enabled=true"]
 
-# 安装依赖
-pip install -r requirements.txt
+# 服务器订阅
+QX_SERVER_REMOTE=["https://example.com/subscribe, tag=我的订阅, update-interval=86400, enabled=true"]
 
-# 设置环境变量（或在青龙面板中设置）
-export QX_MITM_PASSPHRASE="你的密码"
-export QX_MITM_P12="你的证书内容"
+# 策略组（JSON数组格式）
+QX_POLICIES=["static=AiInOne,香港节点,美国节点,狮城节点, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/Global.png", "static=Steam,自动选择,台湾节点,direct,香港节点,日本节点,美国节点,狮城节点,proxy, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Steam.png"]
 
-# 运行脚本
-python main.py
+# DNS配置
+QX_DNS=["server=223.5.5.5", "server=119.29.29.29"]
+
+# 过滤器
+QX_FILTER_REMOTE=["https://raw.githubusercontent.com/ddgksf2013/Filter/master/Unbreak.list, tag=节点选择, force-policy=你的策略组名, update-interval=86400, opt-parser=false, enabled=true"]
+
+# 自定义section
+QX_SECTION_CUSTOM="custom_key=custom_value\nanother_key=another_value"
 ```
 
-## 📋 脚本工作原理
+### 4. 创建定时任务
 
-### 1. **配置获取阶段**
-- 从远程获取 ddgksf2013 的最新配置
-- 使用缓存机制减少网络请求
-- 解析配置文件的各个 section
+在青龙面板的定时任务页面，添加新的定时任务：
 
-### 2. **个性化注入阶段**
-- **MITM 证书**：替换或添加个人证书配置
-- **策略组**：将个人策略组添加到 static 部分开头
-- **重写规则**：去重后添加个人重写规则
-- **服务器订阅**：添加个人服务器订阅链接
-- **其他配置**：DNS、过滤器等个性化配置
+- 命令：`task quantulumtx_generator.py`
+- 定时规则：`0 8 * * *`（每天上午8点运行）
+- 名称：QuantumultX配置生成
 
-### 3. **配置文件生成阶段**
-- 按标准顺序重组配置 sections
-- 应用全局替换规则
-- 验证 MITM 证书格式
-- 生成最终配置文件
+### 5. 首次运行
 
-### 4. **文件保存阶段**
-- 备份原配置文件
-- 保存新配置文件
-- 记录详细日志
+手动运行一次脚本以生成初始配置：
 
-## 🚨 注意事项
+```bash
+python3 /ql/data/scripts/quantumultx_generator.py
+```
 
-### MITM 证书格式
-**重要**：MITM 证书必须是纯字符串格式，不是 JSON 数组格式：
+## 使用说明
+
+### 运行方式
+
+#### 1. 正常检查更新
+```bash
+python3 quantumultx_generator.py
+```
+- 检查远程配置是否有更新
+- 有更新时：下载新配置、合并个人配置、生成最终配置
+- 无更新时：跳过生成，不发送通知
+
+#### 2. 强制更新
+```bash
+python3 quantumultx_generator.py --force
+```
+- 忽略检查结果，强制下载并生成新配置
+- 总会发送通知（即使是相同的配置）
+
+#### 3. 获取帮助
+```bash
+python3 quantumultx_generator.py --help
+```
+
+### 通知类型
+
+脚本会在以下情况发送青龙通知：
+
+1. **配置更新成功**（✅）：远程配置有更新并成功生成新配置
+2. **强制更新成功**（🔧）：使用 `--force` 参数成功生成配置
+3. **配置更新失败**（❌）：获取远程配置或生成配置失败
+
+> **注意**：当远程配置无更新时，脚本不会发送任何通知，避免通知骚扰。
+
+### MITM证书格式要求
+
+MITM证书必须使用**纯字符串格式**，**不能**使用JSON数组格式：
 
 ```bash
 # ✅ 正确格式（纯字符串）
 QX_MITM_PASSPHRASE=A24AB7DF
-QX_MITM_P12=MIILuwIBAzCCC4UGCSqGSIb3DQE...
+QX_MITM_P12=MIILuwIBAzCCC4UGCSqGSIb3DQEHAaCCC3YE...
 
-# ❌ 错误格式（JSON 数组）
+# ❌ 错误格式（JSON数组）
 QX_MITM_PASSPHRASE=["A24AB7DF"]
-QX_MITM_P12=["MIILuwIBAzCCC4UGCSqGSIb3DQE..."]
+QX_MITM_P12=["MIILuwIBAzCCC4UGCSqGSIb3DQEHAaCCC3YE..."]
 ```
 
-### 策略组位置
-- 个人策略组会自动添加到 `static=` 部分的**开头位置**
-- 脚本会自动去重，避免重复添加相同的策略组
+### 策略组格式
 
-### 配置缓存
-- 配置内容会缓存 24 小时
-- 缓存文件位于：`/ql/data/config/qx_config_cache.json`
-- 可通过环境变量 `QX_CACHE_FILE` 修改路径
+策略组使用JSON数组格式，每个策略组必须是 `static=` 开头：
 
-### 备份机制
-- 每次生成都会备份原配置文件和新配置文件
-- 备份文件保存在：`/ql/data/config/backup/`
-- 文件名包含时间戳：`QuantumultX_20240101_120000_old.conf`
+```json
+[
+  "static=策略组名称,服务器1,服务器2,服务器3, img-url=图标URL",
+  "static=游戏加速,香港节点,日本节点,美国节点, img-url=https://example.com/game.png"
+]
+```
 
-## 🔍 故障排除
+## 环境变量详解
+
+### 基础配置
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `QX_REMOTE_URL` | 远程配置地址 | `https://ddgksf2013.top/Profile/QuantumultX.conf` |
+| `QX_CONFIG_PATH` | 本地配置文件路径 | `/ql/data/config/QuantumultX.conf` |
+| `QX_LOG_FILE` | 日志文件路径 | `/ql/data/log/quantumultx_generator.log` |
+| `QX_REMOTE_BACKUP` | 远程配置备份路径 | `/ql/data/config/qx_remote_backup.conf` |
+
+### MITM证书配置（必需）
+
+| 变量名 | 说明 | 格式要求 |
+|--------|------|----------|
+| `QX_MITM_PASSPHRASE` | MITM证书密码 | 纯字符串 |
+| `QX_MITM_P12` | MITM证书内容 | 纯字符串（base64编码的P12证书） |
+
+### 个人化配置（可选）
+
+| 变量名 | 说明 | 格式 |
+|--------|------|------|
+| `QX_REWRITE_REMOTE` | 远程重写规则 | JSON数组 |
+| `QX_REWRITE_LOCAL` | 本地重写规则 | JSON数组 |
+| `QX_SERVER_REMOTE` | 远程服务器订阅 | JSON数组 |
+| `QX_POLICIES` | 策略组配置 | JSON数组 |
+| `QX_DNS` | DNS配置 | JSON数组 |
+| `QX_FILTER_REMOTE` | 远程过滤器 | JSON数组 |
+| `QX_FILTER_LOCAL` | 本地过滤器 | JSON数组 |
+| `QX_SECTION_*` | 自定义section | 字符串或JSON |
+| `QX_REPLACE_*` | 全局替换规则 | JSON对象 |
+
+## 示例配置
+
+### 完整的环境变量示例
+
+```bash
+# 远程配置地址
+QX_REMOTE_URL=https://ddgksf2013.top/Profile/QuantumultX.conf
+
+# MITM证书（必需）
+QX_MITM_PASSPHRASE=A24AB7DF
+QX_MITM_P12=MIILuwIBAzCCC4UGCSqGSIb3DQEHAaCCC3YEgggqMIIDZTCCAk2gAwIBAgIIZmjaof...
+
+# 个人策略组
+QX_POLICIES=["static=AI服务,香港节点,美国节点,狮城节点, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/Global.png", "static=游戏加速,自动选择,台湾节点,direct,香港节点,日本节点,美国节点,狮城节点,proxy, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Steam.png"]
+
+# 重写规则
+QX_REWRITE_REMOTE=["https://github.com/ddgksf2013/Rewrite/raw/master/Function/EmbyPlugin.conf, tag=emby, update-interval=172800, opt-parser=false, enabled=true", "https://github.com/ddgksf2013/Rewrite/raw/master/AdBlock/Bilibili.conf, tag=BiliBili去广告, update-interval=172800, opt-parser=false, enabled=true"]
+
+# 服务器订阅
+QX_SERVER_REMOTE=["https://your-subscribe-url.com/link/your-token?mu=0, tag=我的订阅, update-interval=86400, enabled=true"]
+
+# DNS配置
+QX_DNS=["server=223.5.5.5", "server=119.29.29.29", "server=1.1.1.1"]
+```
+
+### 定时任务配置
+
+在青龙面板定时任务页面，推荐设置：
+
+- 任务名称：QuantumultX配置更新
+- 命令：`task quantulumtx_generator.py`
+- 定时规则：`0 8,20 * * *`（每天上午8点和晚上8点各检查一次）
+- 是否启用：是
+
+## 故障排除
 
 ### 常见问题
 
-1. **MITM 证书格式错误**
-   ```
-   错误信息：MITM证书信息不完整 或 passphrase格式错误，包含方括号
-   解决方法：确保环境变量是纯字符串格式，不是JSON数组格式
-   ```
+1. **MITM证书格式错误**
+  - 错误信息：`passphrase格式错误，包含方括号`
+  - 解决方法：确保MITM证书使用纯字符串格式，不要用JSON数组格式
 
-2. **网络连接失败**
-   ```
-   错误信息：获取远程配置失败
-   解决方法：检查网络连接，或修改QX_REMOTE_URL为可访问的地址
-   ```
+2. **获取远程配置失败**
+  - 错误信息：`获取远程配置失败`
+  - 解决方法：检查网络连接，确认远程URL可访问
 
-3. **权限问题**
-   ```
-   错误信息：Permission denied
-   解决方法：检查青龙面板的文件权限，确保脚本有写入权限
-   ```
+3. **配置生成失败**
+  - 错误信息：`保存配置失败`
+  - 解决方法：检查文件权限，确保青龙有写入权限
 
-4. **配置不生效**
-   ```
-   检查步骤：
-   1. 查看日志文件：/ql/data/log/quantumultx_generator.log
-   2. 检查环境变量是否设置正确
-   3. 确认配置文件已保存到正确位置
-   ```
+4. **通知未发送**
+  - 可能原因：青龙通知模块路径不正确
+  - 解决方法：检查青龙面板的通知配置，脚本会回退到控制台输出
 
 ### 日志查看
 
+查看详细运行日志：
 ```bash
-# 查看实时日志
 tail -f /ql/data/log/quantumultx_generator.log
-
-# 查看完整日志
-cat /ql/data/log/quantumultx_generator.log
 ```
 
-## 📊 生成统计
+### 手动测试
 
-脚本运行后会显示以下统计信息：
-- 原始配置大小
-- 最终配置大小
-- 配置变化量
-- 已添加的个性化内容详情
-- 个人策略组详情
-- MITM 证书格式检查
+手动运行脚本并查看输出：
+```bash
+cd /ql/data/scripts
+python3 quantumultx_generator.py --force
+```
 
-## 🔄 更新说明
+## 工作原理
 
-### v1.0 主要特性
-- 基于 ddgksf2013 配置模板
-- 支持环境变量个性化配置
-- MITM 证书自动注入
-- 策略组智能添加到开头
-- 完整的备份和日志系统
-- 青龙面板集成支持
+1. **获取远程配置**：从指定URL下载QuantumultX配置
+2. **检查更新**：计算配置的MD5哈希，与本地保存的副本比较
+3. **生成配置**：如果配置有更新或使用 `--force` 参数：
+  - 保存新的远程配置副本
+  - 解析配置的各个section
+  - 添加个人配置（MITM证书、策略组、重写规则等）
+  - 验证MITM证书格式
+  - 保存最终配置文件
+4. **发送通知**：根据结果发送青龙通知
+
+## 注意事项
+
+1. **首次运行**：第一次运行时会自动下载远程配置并生成个性化配置
+2. **证书安全**：MITM证书包含敏感信息，请妥善保管
+3. **配置文件**：生成的 `QuantumultX.conf` 可以直接导入QuantumultX使用
+4. **定时任务**：建议设置合理的检查频率，避免频繁请求远程服务器
+5. **备份建议**：虽然脚本不保存历史备份，但建议定期手动备份重要配置
+
+## 更新日志
+
+### v1.0.0
+- 初始版本发布
+- 支持智能更新检查
+- 支持个人化配置合并
+- 集成青龙通知系统
+- 修复MITM证书格式问题
+
+## 技术支持
+
+如遇到问题，请：
+1. 查看日志文件：`/ql/data/log/quantumultx_generator.log`
+2. 检查环境变量配置
+3. 确保网络连接正常
+4. 确认文件权限正确
 
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 🙏 致谢
-
-- [ddgksf2013](https://github.com/ddgksf2013) - 提供 QuantumultX 配置模板
-- QuantumultX 开发者 - 优秀的代理工具
-
-
-## 📧 联系
-
-如有问题或建议，请通过 GitHub Issues 联系。

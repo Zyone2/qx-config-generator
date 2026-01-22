@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-QuantumultX 配置生成脚本（青龙面板环境变量版） - 精简版
-修复比较逻辑：每次与保存的远程配置副本比较，有更新则更新并生成个人配置
-使用青龙面板v2.19.2内置通知系统
-移除本地备份，只保留最新配置和远程配置备份
-"""
-
 import os
 import requests
 import re
@@ -174,17 +166,6 @@ class QuantumultXConfigGenerator:
 ⏰ 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ⚠️ 请导入新的配置文件到QuantumultX"""
-
-        elif update_type == "no_change":
-            title = "ℹ️ QuantumultX配置无更新"
-            content = f"""QuantumultX 配置检查完成
-
-📊 检查结果:
-{message}
-
-⏰ 检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-✅ 远程配置无变化，无需更新"""
 
         elif update_type == "error":
             title = "❌ QuantumultX配置更新失败"
@@ -851,7 +832,7 @@ class QuantumultXConfigGenerator:
         self.force_update = force_update
 
         self.logger.info("=" * 60)
-        self.logger.info("QuantumultX 个性化配置生成器启动（精简版）")
+        self.logger.info("QuantumultX 个性化配置生成器启动")
         self.logger.info(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(f"远程配置URL: {REMOTE_CONFIG_URL}")
         self.logger.info(f"本地配置文件: {LOCAL_CONFIG_PATH}")
@@ -885,10 +866,8 @@ class QuantumultXConfigGenerator:
             self.logger.info("强制更新模式，忽略检查结果")
 
         if not remote_updated:
-            # 远程配置没有更新，不需要生成新配置
+            # 远程配置没有更新，不需要生成新配置，也不发送通知
             self.logger.info("远程配置无更新，跳过配置生成")
-            notification_msg = f"远程配置无更新\n{REMOTE_CONFIG_URL}\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            self.send_notification(notification_msg, "no_change")
             return True
 
         # 4. 保存新的远程配置备份
@@ -999,59 +978,21 @@ MITM证书: {'已配置' if mitm_config.get('passphrase') and mitm_config.get('p
             return False
 
 
-def print_usage():
-    """打印使用说明"""
-    print("=" * 60)
-    print("QuantumultX 配置生成器（精简版）")
-    print("=" * 60)
-    print("使用方法:")
-    print("1. 在青龙面板中设置环境变量（以QX_开头）")
-    print("2. 运行脚本生成个性化配置")
-    print("")
-    print("环境变量示例（重要：MITM证书必须是纯字符串，不是JSON格式）:")
-    print("")
-    print("# MITM证书配置（必需，纯字符串格式）")
-    print("QX_MITM_PASSPHRASE=A24AB7DF")
-    print("QX_MITM_P12=MIILuwIBAzCCC4UGCSqGSIb3DQEHAaCCC3YE...")
-    print("")
-    print("# 重写规则（可选，JSON格式）")
-    print('QX_REWRITE_REMOTE=["https://github.com/ddgksf2013/Rewrite/raw/master/Function/EmbyPlugin.conf, tag=emby, update-interval=172800, opt-parser=false, enabled=true"]')
-    print("")
-    print("# 服务器订阅（可选）")
-    print('QX_SERVER_REMOTE=["https://example.com/subscribe, tag=我的订阅, update-interval=86400, enabled=true"]')
-    print("")
-    print("# 策略组（可选，JSON数组格式）")
-    print('QX_POLICIES=["static=AiInOne,香港节点, 美国节点,狮城节点, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/Global.png", "static=Steam, 自动选择, 台湾节点, direct, 香港节点, 日本节点, 美国节点, 狮城节点, proxy, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Steam.png"]')
-    print("")
-    print("脚本参数：")
-    print("  --force    强制更新配置（忽略检查结果）")
-    print("  -h, --help 显示此帮助信息")
-    print("")
-    print("工作原理：")
-    print("1. 获取远程配置并与本地保存的远程配置备份比较")
-    print("2. 如果远程配置有更新，则保存新的备份并生成个性化配置")
-    print("3. 如果远程配置无更新，则跳过生成并发送通知")
-    print("4. 使用--force参数可以强制更新")
-    print("")
-    print("注意：")
-    print("1. 不保存历史备份，只保留最新生成的配置")
-    print("2. 远程配置备份保存在: qx_remote_backup.conf")
-    print("3. 最终配置保存在: QuantumultX.conf")
-    print("=" * 60)
-
-
 def main():
     """主函数"""
     # 解析命令行参数
     force_update = False
 
     for arg in sys.argv[1:]:
-        if arg in ["-h", "--help", "help"]:
-            print_usage()
-            return
-        elif arg == "--force":
+        if arg == "--force":
             force_update = True
             print("强制更新模式已启用")
+        elif arg in ["-h", "--help"]:
+            # 简单帮助信息
+            print("QuantumultX 配置生成器")
+            print("使用方法: python3 script.py [--force]")
+            print("  --force  强制更新配置（忽略检查结果）")
+            return
 
     # 运行配置生成器
     generator = QuantumultXConfigGenerator()
