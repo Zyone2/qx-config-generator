@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-QuantumultX 配置生成脚本（青龙面板环境变量版）
-修复header问题，确保MITM证书格式正确，个人策略组添加到static部分开始位置
+QuantumultX 配置生成脚本（青龙面板环境变量版） - 修复版
+修复比较逻辑：每次与保存的远程配置副本比较，有更新则更新并生成个人配置
+添加Bark通知功能
 """
 
 import os
@@ -18,9 +19,14 @@ LOCAL_CONFIG_PATH = os.getenv("QX_CONFIG_PATH", "/ql/data/config/QuantumultX.con
 BACKUP_DIR = os.getenv("QX_BACKUP_DIR", "/ql/data/config/backup")
 LOG_FILE = os.getenv("QX_LOG_FILE", "/ql/data/log/quantumultx_generator.log")
 CACHE_FILE = os.getenv("QX_CACHE_FILE", "/ql/data/config/qx_config_cache.json")
+REMOTE_CONFIG_BACKUP = os.getenv("QX_REMOTE_BACKUP", "/ql/data/config/qx_remote_backup.conf")
 
 # 远程配置地址
 REMOTE_CONFIG_URL = os.getenv("QX_REMOTE_URL", "https://ddgksf2013.top/Profile/QuantumultX.conf")
+
+# Bark通知配置
+BARK_URL = os.getenv("QX_BARK_URL", "")  # Bark通知URL，格式如：https://api.day.app/your_key/
+BARK_TITLE = os.getenv("QX_BARK_TITLE", "QuantumultX配置更新")
 
 # 环境变量前缀
 ENV_VAR_PREFIX = "QX_"
@@ -33,6 +39,7 @@ class QuantumultXConfigGenerator:
         self.logger = self.setup_logger()
         self.config_sections = {}
         self.personal_config = {}
+        self.force_update = False
 
     def setup_logger(self):
         """设置日志"""
@@ -67,6 +74,48 @@ class QuantumultXConfigGenerator:
             logger.addHandler(console_handler)
 
         return logger
+
+    def send_bark_notification(self, message: str, update_type: str = "info"):
+        """发送Bark通知"""
+        if not BARK_URL:
+            self.logger.info("未配置Bark URL，跳过通知")
+            return False
+
+        try:
+            # 准备通知内容
+            title = f"{BARK_TITLE}"
+            if update_type == "updated":
+                title = f"✅ {title} - 已更新"
+            elif update_type == "no_change":
+                title = f"ℹ️ {title} - 无变化"
+            elif update_type == "error":
+                title = f"❌ {title} - 错误"
+            elif update_type == "force":
+                title = f"🔧 {title} - 强制更新"
+
+            # 编码URL
+            import urllib.parse
+            encoded_title = urllib.parse.quote(title)
+            encoded_message = urllib.parse.quote(message)
+
+            # 构建通知URL
+            if BARK_URL.endswith("/"):
+                bark_url = f"{BARK_URL}{encoded_title}/{encoded_message}"
+            else:
+                bark_url = f"{BARK_URL}/{encoded_title}/{encoded_message}"
+
+            # 发送请求
+            response = requests.get(bark_url, timeout=10)
+            if response.status_code == 200:
+                self.logger.info(f"Bark通知发送成功: {message}")
+                return True
+            else:
+                self.logger.warning(f"Bark通知发送失败: {response.status_code}")
+                return False
+
+        except Exception as e:
+            self.logger.error(f"发送Bark通知时出错: {str(e)}")
+            return False
 
     def parse_env_var_value(self, value: str):
         """解析环境变量的值，支持JSON和文本格式"""
@@ -189,28 +238,8 @@ class QuantumultXConfigGenerator:
         """计算配置内容的哈希值"""
         return hashlib.md5(content.encode('utf-8')).hexdigest()
 
-    def get_remote_config(self, use_cache: bool = True) -> Optional[str]:
+    def get_remote_config(self) -> Optional[str]:
         """获取远程配置"""
-        # 尝试使用缓存
-        if use_cache and os.path.exists(CACHE_FILE):
-            try:
-                with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-
-                # 检查缓存是否过期（24小时）
-                cache_time_str = cache_data.get('timestamp', '')
-                if cache_time_str:
-                    try:
-                        cache_time = datetime.fromisoformat(cache_time_str)
-                        if (datetime.now() - cache_time).total_seconds() < 86400:
-                            self.logger.info(f"使用缓存配置（保存于 {cache_time.strftime('%Y-%m-%d %H:%M:%S')}）")
-                            return cache_data.get('content', '')
-                    except ValueError:
-                        pass  # 时间格式错误，跳过缓存
-            except Exception as e:
-                self.logger.warning(f"加载缓存失败: {str(e)}")
-
-        # 从远程获取
         self.logger.info(f"开始获取远程配置: {REMOTE_CONFIG_URL}")
 
         headers = {
@@ -228,25 +257,6 @@ class QuantumultXConfigGenerator:
                 return None
 
             self.logger.info(f"成功获取远程配置，大小: {len(content)} 字节")
-
-            # 保存缓存
-            cache_data = {
-                'timestamp': datetime.now().isoformat(),
-                'content': content,
-                'hash': self.get_config_hash(content)
-            }
-
-            cache_dir = os.path.dirname(CACHE_FILE)
-            if cache_dir and not os.path.exists(cache_dir):
-                os.makedirs(cache_dir, exist_ok=True)
-
-            try:
-                with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(cache_data, f, ensure_ascii=False, indent=2)
-                self.logger.info("配置缓存已保存")
-            except Exception as e:
-                self.logger.error(f"保存缓存失败: {str(e)}")
-
             return content
 
         except requests.RequestException as e:
@@ -255,6 +265,66 @@ class QuantumultXConfigGenerator:
         except Exception as e:
             self.logger.error(f"处理远程配置时出错: {str(e)}")
             return None
+
+    def save_remote_config_backup(self, content: str):
+        """保存远程配置备份"""
+        try:
+            # 确保目录存在
+            backup_dir = os.path.dirname(REMOTE_CONFIG_BACKUP)
+            if backup_dir and not os.path.exists(backup_dir):
+                os.makedirs(backup_dir, exist_ok=True)
+
+            # 保存备份
+            with open(REMOTE_CONFIG_BACKUP, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            # 保存哈希值
+            config_hash = self.get_config_hash(content)
+            hash_file = REMOTE_CONFIG_BACKUP + ".hash"
+            with open(hash_file, 'w', encoding='utf-8') as f:
+                f.write(config_hash)
+
+            self.logger.info(f"远程配置备份已保存: {REMOTE_CONFIG_BACKUP}")
+            self.logger.info(f"配置哈希值: {config_hash[:12]}...")
+
+        except Exception as e:
+            self.logger.error(f"保存远程配置备份失败: {str(e)}")
+
+    def load_remote_config_backup(self) -> Optional[str]:
+        """加载远程配置备份"""
+        try:
+            if os.path.exists(REMOTE_CONFIG_BACKUP):
+                with open(REMOTE_CONFIG_BACKUP, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.logger.info(f"加载远程配置备份，大小: {len(content)} 字节")
+                return content
+            else:
+                self.logger.info("远程配置备份不存在")
+                return None
+        except Exception as e:
+            self.logger.error(f"加载远程配置备份失败: {str(e)}")
+            return None
+
+    def check_if_remote_updated(self, new_content: str) -> bool:
+        """检查远程配置是否有更新"""
+        # 加载旧备份
+        old_content = self.load_remote_config_backup()
+
+        if not old_content:
+            # 如果没有旧备份，说明是第一次运行
+            self.logger.info("首次运行，无旧配置可比较")
+            return True
+
+        # 计算新旧内容的哈希值
+        old_hash = self.get_config_hash(old_content)
+        new_hash = self.get_config_hash(new_content)
+
+        if old_hash == new_hash:
+            self.logger.info(f"远程配置无变化 (哈希值相同: {old_hash[:12]}...)")
+            return False
+        else:
+            self.logger.info(f"远程配置有更新: {old_hash[:12]}... -> {new_hash[:12]}...")
+            return True
 
     def parse_config_sections(self, config_content: str) -> Dict[str, str]:
         """解析配置文件的各个部分，不包含header"""
@@ -537,6 +607,8 @@ class QuantumultXConfigGenerator:
         config_parts.append(f"# 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         config_parts.append(f"# 基于: {REMOTE_CONFIG_URL}")
         config_parts.append(f"# 配置来源: 青龙面板环境变量")
+        if self.force_update:
+            config_parts.append(f"# 生成模式: 强制更新")
         config_parts.append("")
 
         # 标准section的顺序
@@ -706,17 +778,22 @@ class QuantumultXConfigGenerator:
         self.logger.info("MITM证书格式正确")
         return True
 
-    def run(self) -> bool:
+    def run(self, force_update: bool = False) -> bool:
         """运行配置生成器"""
+        self.force_update = force_update
+
         self.logger.info("=" * 60)
-        self.logger.info("QuantumultX 个性化配置生成器启动")
+        self.logger.info("QuantumultX 个性化配置生成器启动（修复比较逻辑版）")
         self.logger.info(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(f"远程配置URL: {REMOTE_CONFIG_URL}")
         self.logger.info(f"本地配置文件: {LOCAL_CONFIG_PATH}")
+        self.logger.info(f"远程配置备份: {REMOTE_CONFIG_BACKUP}")
+        self.logger.info(f"更新模式: {'强制更新' if force_update else '智能更新'}")
         self.logger.info("=" * 60)
 
         # 1. 加载个人配置
         self.personal_config = self.load_personal_config_from_env()
+
         policies = self.personal_config.get("policies", [])
         mitm_config = self.personal_config.get("mitm", {})
 
@@ -724,27 +801,50 @@ class QuantumultXConfigGenerator:
         self.logger.info(f"MITM配置: passphrase={mitm_config.get('passphrase', '')[:10]}..., p12长度={len(mitm_config.get('p12', ''))}")
 
         # 2. 获取远程配置
-        remote_content = self.get_remote_config(use_cache=True)
+        remote_content = self.get_remote_config()
         if not remote_content:
             self.logger.error("获取远程配置失败，程序退出")
+            self.send_bark_notification(f"获取远程配置失败\nURL: {REMOTE_CONFIG_URL}", "error")
             return False
 
-        # 3. 解析配置sections（不包含header）
+        # 3. 检查远程配置是否有更新
+        remote_updated = self.check_if_remote_updated(remote_content)
+
+        # 如果是强制更新模式，则忽略检查结果
+        if self.force_update:
+            remote_updated = True
+            self.logger.info("强制更新模式，忽略检查结果")
+
+        if not remote_updated:
+            # 远程配置没有更新，不需要生成新配置
+            self.logger.info("远程配置无更新，跳过配置生成")
+            notification_msg = f"远程配置无更新\n{REMOTE_CONFIG_URL}\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            self.send_bark_notification(notification_msg, "no_change")
+            return True
+
+        # 4. 保存新的远程配置备份
+        self.save_remote_config_backup(remote_content)
+
+        # 5. 解析配置sections（不包含header）
         sections = self.parse_config_sections(remote_content)
         self.logger.info(f"解析到 {len(sections)} 个配置section")
 
-        # 4. 生成最终配置
+        # 6. 生成最终配置
         final_config = self.generate_final_config(sections)
 
-        # 5. 验证配置
+        # 7. 验证配置
         mitm_valid = self.validate_mitm_section(final_config)
 
         if not mitm_valid:
             self.logger.error("MITM证书验证失败")
+            self.send_bark_notification("MITM证书验证失败，请检查证书格式", "error")
             return False
 
-        # 6. 保存配置
+        # 8. 保存配置
         if self.save_config(final_config):
+            # 计算配置哈希值
+            final_hash = self.get_config_hash(final_config)
+
             # 输出统计信息
             original_size = len(remote_content)
             final_size = len(final_config)
@@ -754,6 +854,7 @@ class QuantumultXConfigGenerator:
             self.logger.info(f"原始配置大小: {original_size} 字节")
             self.logger.info(f"最终配置大小: {final_size} 字节")
             self.logger.info(f"配置变化: {final_size - original_size} 字节")
+            self.logger.info(f"最终配置哈希: {final_hash[:12]}...")
             self.logger.info("=" * 60)
 
             # 输出个人化内容摘要
@@ -809,16 +910,24 @@ class QuantumultXConfigGenerator:
             self.logger.info("3. 重启QuantumultX使配置生效")
             self.logger.info("=" * 60)
 
+            # 发送成功通知
+            notification_msg = f"配置文件已更新\n大小: {final_size}字节\n策略组: {len(policies)}个\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            if self.force_update:
+                self.send_bark_notification(notification_msg, "force")
+            else:
+                self.send_bark_notification(notification_msg, "updated")
+
             return True
         else:
             self.logger.error("配置生成失败")
+            self.send_bark_notification("配置生成失败，请检查日志", "error")
             return False
 
 
 def print_usage():
     """打印使用说明"""
     print("=" * 60)
-    print("QuantumultX 配置生成器（最终修复版）")
+    print("QuantumultX 配置生成器（修复比较逻辑版）")
     print("=" * 60)
     print("使用方法:")
     print("1. 在青龙面板中设置环境变量（以QX_开头）")
@@ -839,27 +948,46 @@ def print_usage():
     print("# 策略组（可选，JSON数组格式）")
     print('QX_POLICIES=["static=AiInOne,香港节点, 美国节点,狮城节点, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/Global.png", "static=Steam, 自动选择, 台湾节点, direct, 香港节点, 日本节点, 美国节点, 狮城节点, proxy, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Steam.png"]')
     print("")
-    print("注意：")
-    print("1. MITM证书必须是纯字符串格式，不要用JSON数组格式")
-    print("2. 脚本会自动将个人策略组添加到正确位置（static部分的开始位置）")
-    print("3. 不会包含原配置的header内容")
+    print("# Bark通知配置（可选）")
+    print("QX_BARK_URL=https://api.day.app/your_key")
+    print("QX_BARK_TITLE=QuantumultX配置更新")
+    print("")
+    print("脚本参数：")
+    print("  --force    强制更新配置（忽略检查结果）")
+    print("  -h, --help 显示此帮助信息")
+    print("")
+    print("工作原理：")
+    print("1. 获取远程配置并与本地保存的远程配置备份比较")
+    print("2. 如果远程配置有更新，则保存新的备份并生成个性化配置")
+    print("3. 如果远程配置无更新，则跳过生成并发送通知")
+    print("4. 使用--force参数可以强制更新")
     print("=" * 60)
 
 
 def main():
     """主函数"""
-    # 检查是否显示使用说明
-    if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help", "help"]:
-        print_usage()
-        return
+    # 解析命令行参数
+    force_update = False
+
+    for arg in sys.argv[1:]:
+        if arg in ["-h", "--help", "help"]:
+            print_usage()
+            return
+        elif arg == "--force":
+            force_update = True
+            print("强制更新模式已启用")
 
     # 运行配置生成器
     generator = QuantumultXConfigGenerator()
-    success = generator.run()
+    success = generator.run(force_update=force_update)
 
     if success:
-        print("✅ QuantumultX 配置生成成功！")
+        if generator.force_update:
+            print("✅ QuantumultX 配置强制更新成功！")
+        else:
+            print("✅ QuantumultX 配置更新检查完成！")
         print(f"📁 配置文件: {LOCAL_CONFIG_PATH}")
+        print(f"💾 远程配置备份: {REMOTE_CONFIG_BACKUP}")
         print(f"📝 日志文件: {LOG_FILE}")
         print(f"💾 备份目录: {BACKUP_DIR}")
         print("")
