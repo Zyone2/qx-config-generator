@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-QuantumultX 配置生成脚本（青龙面板环境变量版） - 修复版
+QuantumultX 配置生成脚本（青龙面板环境变量版） - 精简版
 修复比较逻辑：每次与保存的远程配置副本比较，有更新则更新并生成个人配置
-添加Bark通知功能
+使用青龙面板v2.19.2内置通知系统
+移除本地备份，只保留最新配置和远程配置备份
 """
 
 import os
@@ -16,17 +17,11 @@ import hashlib
 
 # 基础路径配置（可通过环境变量覆盖）
 LOCAL_CONFIG_PATH = os.getenv("QX_CONFIG_PATH", "/ql/data/config/QuantumultX.conf")
-BACKUP_DIR = os.getenv("QX_BACKUP_DIR", "/ql/data/config/backup")
 LOG_FILE = os.getenv("QX_LOG_FILE", "/ql/data/log/quantumultx_generator.log")
-CACHE_FILE = os.getenv("QX_CACHE_FILE", "/ql/data/config/qx_config_cache.json")
 REMOTE_CONFIG_BACKUP = os.getenv("QX_REMOTE_BACKUP", "/ql/data/config/qx_remote_backup.conf")
 
 # 远程配置地址
 REMOTE_CONFIG_URL = os.getenv("QX_REMOTE_URL", "https://ddgksf2013.top/Profile/QuantumultX.conf")
-
-# Bark通知配置
-BARK_URL = os.getenv("QX_BARK_URL", "")  # Bark通知URL，格式如：https://api.day.app/your_key/
-BARK_TITLE = os.getenv("QX_BARK_TITLE", "QuantumultX配置更新")
 
 # 环境变量前缀
 ENV_VAR_PREFIX = "QX_"
@@ -75,47 +70,150 @@ class QuantumultXConfigGenerator:
 
         return logger
 
-    def send_bark_notification(self, message: str, update_type: str = "info"):
-        """发送Bark通知"""
-        if not BARK_URL:
-            self.logger.info("未配置Bark URL，跳过通知")
-            return False
-
+    def send_ql_notification(self, title: str, content: str):
+        """使用青龙面板v2.19.2内置通知系统发送通知"""
         try:
-            # 准备通知内容
-            title = f"{BARK_TITLE}"
-            if update_type == "updated":
-                title = f"✅ {title} - 已更新"
-            elif update_type == "no_change":
-                title = f"ℹ️ {title} - 无变化"
-            elif update_type == "error":
-                title = f"❌ {title} - 错误"
-            elif update_type == "force":
-                title = f"🔧 {title} - 强制更新"
+            # 尝试导入青龙面板的notify模块
+            # 青龙v2.19.2的notify模块通常位于以下路径
+            notify_paths = [
+                '/ql/data/scripts/notify.py',
+                '/ql/scripts/notify.py',
+                '/ql/data/scripts/sendNotify.py',
+                '/ql/scripts/sendNotify.py'
+            ]
 
-            # 编码URL
-            import urllib.parse
-            encoded_title = urllib.parse.quote(title)
-            encoded_message = urllib.parse.quote(message)
+            for notify_path in notify_paths:
+                if os.path.exists(notify_path):
+                    try:
+                        self.logger.info(f"尝试从 {notify_path} 导入通知模块")
 
-            # 构建通知URL
-            if BARK_URL.endswith("/"):
-                bark_url = f"{BARK_URL}{encoded_title}/{encoded_message}"
-            else:
-                bark_url = f"{BARK_URL}/{encoded_title}/{encoded_message}"
+                        # 动态导入模块
+                        import importlib.util
+                        spec = importlib.util.spec_from_file_location("notify_module", notify_path)
+                        notify_module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(notify_module)
 
-            # 发送请求
-            response = requests.get(bark_url, timeout=10)
-            if response.status_code == 200:
-                self.logger.info(f"Bark通知发送成功: {message}")
+                        # 检查是否有send函数
+                        if hasattr(notify_module, 'send'):
+                            # 尝试发送通知
+                            notify_module.send(title, content)
+                            self.logger.info(f"青龙通知发送成功: {title}")
+                            return True
+                        elif hasattr(notify_module, 'send_notify'):
+                            # 有些版本使用send_notify
+                            notify_module.send_notify(title, content)
+                            self.logger.info(f"青龙通知发送成功: {title} (使用send_notify)")
+                            return True
+
+                    except Exception as e:
+                        self.logger.warning(f"从 {notify_path} 导入通知模块失败: {str(e)}")
+                        continue
+
+            # 如果找不到通知模块，尝试使用QL原生的通知方式
+            self.logger.info("尝试使用QL原生通知方式")
+
+            # 尝试导入ql包
+            try:
+                from qinglong import notify
+                notify(title, content)
+                self.logger.info(f"QL原生通知发送成功: {title}")
                 return True
-            else:
-                self.logger.warning(f"Bark通知发送失败: {response.status_code}")
-                return False
+            except ImportError:
+                pass
+
+            # 尝试使用环境变量中的通知脚本
+            ql_notify_path = os.getenv('QL_NOTIFY_SCRIPT', '/ql/data/scripts/notify.py')
+            if os.path.exists(ql_notify_path):
+                try:
+                    # 执行通知脚本
+                    import subprocess
+                    result = subprocess.run(
+                        [sys.executable, ql_notify_path, title, content],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        self.logger.info(f"通过脚本发送通知成功: {title}")
+                        return True
+                except Exception as e:
+                    self.logger.warning(f"执行通知脚本失败: {str(e)}")
+
+            # 如果所有方法都失败，使用控制台输出
+            self.logger.warning("无法找到青龙通知模块，将使用简单控制台输出")
+
+            # 控制台输出模拟通知
+            print(f"\n{'='*60}")
+            print(f"通知标题: {title}")
+            print(f"通知内容:")
+            print(content)
+            print(f"{'='*60}\n")
+            return True
 
         except Exception as e:
-            self.logger.error(f"发送Bark通知时出错: {str(e)}")
+            self.logger.error(f"发送青龙通知失败: {str(e)}")
+
+            # 回退到简单输出
+            print(f"\n{'='*60}")
+            print(f"通知标题: {title}")
+            print(f"通知内容:")
+            print(content)
+            print(f"{'='*60}\n")
             return False
+
+    def send_notification(self, message: str, update_type: str = "info"):
+        """发送通知"""
+        # 准备通知标题和内容
+        if update_type == "updated":
+            title = "✅ QuantumultX配置更新成功"
+            content = f"""QuantumultX 配置已更新
+
+📊 更新详情:
+{message}
+
+⏰ 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+⚠️ 请导入新的配置文件到QuantumultX"""
+
+        elif update_type == "no_change":
+            title = "ℹ️ QuantumultX配置无更新"
+            content = f"""QuantumultX 配置检查完成
+
+📊 检查结果:
+{message}
+
+⏰ 检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+✅ 远程配置无变化，无需更新"""
+
+        elif update_type == "error":
+            title = "❌ QuantumultX配置更新失败"
+            content = f"""QuantumultX 配置更新失败
+
+❌ 错误信息:
+{message}
+
+⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+🔍 请检查日志文件: {LOG_FILE}"""
+
+        elif update_type == "force":
+            title = "🔧 QuantumultX配置强制更新"
+            content = f"""QuantumultX 配置已强制更新
+
+📊 更新详情:
+{message}
+
+⏰ 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+⚠️ 请导入新的配置文件到QuantumultX"""
+
+        else:
+            title = "ℹ️ QuantumultX配置生成器"
+            content = message
+
+        # 发送通知
+        return self.send_ql_notification(title, content)
 
     def parse_env_var_value(self, value: str):
         """解析环境变量的值，支持JSON和文本格式"""
@@ -356,24 +454,6 @@ class QuantumultXConfigGenerator:
         self.logger.info(f"解析到以下section: {list(sections.keys())}")
 
         return sections
-
-    def backup_config(self, config_content: str, suffix: str = "") -> str:
-        """备份配置文件"""
-        if not os.path.exists(BACKUP_DIR):
-            os.makedirs(BACKUP_DIR, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.join(BACKUP_DIR, f"QuantumultX_{timestamp}{suffix}.conf")
-
-        try:
-            with open(backup_file, 'w', encoding='utf-8') as f:
-                f.write(config_content)
-
-            self.logger.info(f"配置已备份到: {backup_file}")
-            return backup_file
-        except Exception as e:
-            self.logger.error(f"备份配置失败: {str(e)}")
-            return ""
 
     def update_mitm_section(self, mitm_content: str) -> str:
         """更新MITM部分"""
@@ -701,28 +781,16 @@ class QuantumultXConfigGenerator:
         return full_config
 
     def save_config(self, config_content: str) -> bool:
-        """保存配置文件"""
+        """保存配置文件，不进行备份"""
         try:
             # 确保目录存在
             config_dir = os.path.dirname(LOCAL_CONFIG_PATH)
             if config_dir and not os.path.exists(config_dir):
                 os.makedirs(config_dir, exist_ok=True)
 
-            # 备份原配置文件（如果存在）
-            if os.path.exists(LOCAL_CONFIG_PATH):
-                try:
-                    with open(LOCAL_CONFIG_PATH, 'r', encoding='utf-8') as f:
-                        old_content = f.read()
-                    self.backup_config(old_content, "_old")
-                except Exception as e:
-                    self.logger.warning(f"备份原配置失败: {str(e)}")
-
-            # 保存新配置
+            # 直接保存新配置（覆盖原有文件）
             with open(LOCAL_CONFIG_PATH, 'w', encoding='utf-8') as f:
                 f.write(config_content)
-
-            # 备份新配置
-            self.backup_config(config_content, "_new")
 
             self.logger.info(f"配置文件已保存到: {LOCAL_CONFIG_PATH}")
             return True
@@ -783,7 +851,7 @@ class QuantumultXConfigGenerator:
         self.force_update = force_update
 
         self.logger.info("=" * 60)
-        self.logger.info("QuantumultX 个性化配置生成器启动（修复比较逻辑版）")
+        self.logger.info("QuantumultX 个性化配置生成器启动（精简版）")
         self.logger.info(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(f"远程配置URL: {REMOTE_CONFIG_URL}")
         self.logger.info(f"本地配置文件: {LOCAL_CONFIG_PATH}")
@@ -804,7 +872,8 @@ class QuantumultXConfigGenerator:
         remote_content = self.get_remote_config()
         if not remote_content:
             self.logger.error("获取远程配置失败，程序退出")
-            self.send_bark_notification(f"获取远程配置失败\nURL: {REMOTE_CONFIG_URL}", "error")
+            notification_msg = f"获取远程配置失败\nURL: {REMOTE_CONFIG_URL}"
+            self.send_notification(notification_msg, "error")
             return False
 
         # 3. 检查远程配置是否有更新
@@ -819,7 +888,7 @@ class QuantumultXConfigGenerator:
             # 远程配置没有更新，不需要生成新配置
             self.logger.info("远程配置无更新，跳过配置生成")
             notification_msg = f"远程配置无更新\n{REMOTE_CONFIG_URL}\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            self.send_bark_notification(notification_msg, "no_change")
+            self.send_notification(notification_msg, "no_change")
             return True
 
         # 4. 保存新的远程配置备份
@@ -837,7 +906,7 @@ class QuantumultXConfigGenerator:
 
         if not mitm_valid:
             self.logger.error("MITM证书验证失败")
-            self.send_bark_notification("MITM证书验证失败，请检查证书格式", "error")
+            self.send_notification("MITM证书验证失败，请检查证书格式", "error")
             return False
 
         # 8. 保存配置
@@ -911,23 +980,29 @@ class QuantumultXConfigGenerator:
             self.logger.info("=" * 60)
 
             # 发送成功通知
-            notification_msg = f"配置文件已更新\n大小: {final_size}字节\n策略组: {len(policies)}个\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            notification_msg = f"""配置文件已更新
+原始配置: {original_size}字节
+最终配置: {final_size}字节
+变化: {final_size - original_size}字节
+策略组: {len(policies)}个
+MITM证书: {'已配置' if mitm_config.get('passphrase') and mitm_config.get('p12') else '未配置'}"""
+
             if self.force_update:
-                self.send_bark_notification(notification_msg, "force")
+                self.send_notification(notification_msg, "force")
             else:
-                self.send_bark_notification(notification_msg, "updated")
+                self.send_notification(notification_msg, "updated")
 
             return True
         else:
             self.logger.error("配置生成失败")
-            self.send_bark_notification("配置生成失败，请检查日志", "error")
+            self.send_notification("配置生成失败，请检查日志", "error")
             return False
 
 
 def print_usage():
     """打印使用说明"""
     print("=" * 60)
-    print("QuantumultX 配置生成器（修复比较逻辑版）")
+    print("QuantumultX 配置生成器（精简版）")
     print("=" * 60)
     print("使用方法:")
     print("1. 在青龙面板中设置环境变量（以QX_开头）")
@@ -948,10 +1023,6 @@ def print_usage():
     print("# 策略组（可选，JSON数组格式）")
     print('QX_POLICIES=["static=AiInOne,香港节点, 美国节点,狮城节点, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/Global.png", "static=Steam, 自动选择, 台湾节点, direct, 香港节点, 日本节点, 美国节点, 狮城节点, proxy, img-url=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Steam.png"]')
     print("")
-    print("# Bark通知配置（可选）")
-    print("QX_BARK_URL=https://api.day.app/your_key")
-    print("QX_BARK_TITLE=QuantumultX配置更新")
-    print("")
     print("脚本参数：")
     print("  --force    强制更新配置（忽略检查结果）")
     print("  -h, --help 显示此帮助信息")
@@ -961,6 +1032,11 @@ def print_usage():
     print("2. 如果远程配置有更新，则保存新的备份并生成个性化配置")
     print("3. 如果远程配置无更新，则跳过生成并发送通知")
     print("4. 使用--force参数可以强制更新")
+    print("")
+    print("注意：")
+    print("1. 不保存历史备份，只保留最新生成的配置")
+    print("2. 远程配置备份保存在: qx_remote_backup.conf")
+    print("3. 最终配置保存在: QuantumultX.conf")
     print("=" * 60)
 
 
@@ -989,7 +1065,6 @@ def main():
         print(f"📁 配置文件: {LOCAL_CONFIG_PATH}")
         print(f"💾 远程配置备份: {REMOTE_CONFIG_BACKUP}")
         print(f"📝 日志文件: {LOG_FILE}")
-        print(f"💾 备份目录: {BACKUP_DIR}")
         print("")
         sys.exit(0)
     else:
